@@ -3,6 +3,71 @@ Self-Driving Car Engineer Nanodegree Program
 
 ---
 
+## Rubrik Points
+
+### The Model
+
+The simulator passes several information into the program:
+* x and y position of waypoints in global coordinates
+* x and y position of the vehicle in global coordinates
+* orientation angle of the vehicle
+* velocity of the vehicle
+* steering angle of the vehicle
+* throttle of the vehicle
+
+Model Predictive Control (MPC) is used to control the throttle `a` and the steering angle `delta` of the car. The MPC is a kinematic model and uses the following equations:
+```
+x[t+1] = x[t] + v[t] * cos(psi[t]) * dt
+y[t+1] = y[t] + v[t] * sin(psi[t]) * dt
+psi[t+1] = psi[t] + v[t] / Lf * delta[t] * dt
+v[t+1] = v[t] + a[t] * dt
+cte[t+1] = f(x[t]) - y[t] + v[t] * sin(espi[t]) * dt
+epsi[t+1] = psi[t] - psides[t] + v[t] * delta[t] / Lf * dt
+```
+
+Where:
+* `x`: x position of the vehicle
+* `y`: y position of the vehicle
+* `psi`: orientation of the vehicle
+* `v`: velocity of the vehicle
+* `cte`: cross-track error, which is the deviation in y-direction from the desired path
+* `epsi`: orientation error, which is the deviation from the desired orientation
+* `f(x)`: the polynomial which is mapping the path
+* `psides`: the desired orientation which is `atan(f'(x))`
+
+The state of the vehicle is consists of the first six elemements of the list above.
+
+The MPC reframes the problem of following a trajectory as an optimization problem. This involves simulating different actuator inputs, predicting the resulting trajectory and selecting the trajectory with the minimum cost. After the lowest cost trajectory is found, the first set of actuation commands is implemented. The rest of the calculated trajectory is thrown away. The reason for that is that we cannot be sure of a perfect execution of the commands which could result in a deviation from the desired trajectory. Instead, we take the new state and use that to perform the same steps again.
+
+The described optimization problem tries to find the optimal acceleration `a` and steering angle `delta` according to a cost function. For this implementation the cost function considered the following factors:
+* squared `cte`
+* squared `epsi`
+* squared difference of the `v` to a desired velocity which avoids that the vehicle stops driving when it is on the desired trajectory but not at the desired location yet
+* squared `delta` and squared `a` to avoid erratic control inputs
+* squared `delta[t-1] - delta[t]` and `a[t-1] - a[t]` to smooth sequential actuations
+
+All those terms are added together for the cost function. The weights of those cost function terms will influence the solver in handling those terms. The higher the weights the closer together sequential values will be and the smoother the output will be.
+
+### Timestep Length and Elapsed Duration
+
+The elapsed duration `dt` together with the number of steps `N` determine the horizon of the prediction. Having `N = 10` and `dt = 0.1 s` would result in a prediction horizon of 1 second. `N` also impacts the performance of the controller as it influences the length of the solution vector. As we try to control a car at higher speeds the environment might change very fast which is why I decided to use a prediction horizon of 1 second. Because of the speed and some strong curves on the track it is beneficial to have a short duration between control inputs. Because we have to deal with a latency of 100 ms I decided that it would not make sense to calculate a new set of control parameters before the previous ones have been executed. This is why a `dt` of 100 ms was chosen. In order to get to a prediction horizon of 1 second this resulted in 10 steps `N`.
+
+### Polynomial Fitting and MPC Preprocessing
+
+ The waypoints and the vehicle's coordinates are passed to the controller in global coordinates. As a first step the waypoints are converted into vehicle coordinates. This means the position of the vehicle is the origin of the coordinate system and the x-axis pointing in the direction of the heading of the car and the y-axis pointing to the left. This can be done using homogenous transformation. First we shift the origin of the global coordinate system to the origin of the vehicle's coordinate system by subtracting `x` and `y` of the vehicle from `x` and `y` of the waypoints. Then we rotate the coordinate system to match the vehicle's orientation:
+
+ ```
+ x_transformed = x * cos(-psi) - y * sin(-psi)
+ y_transformed = x * sin(-psi) + y * cos(-psi)
+ ```
+After that we fit a third-degree polyonomial to the transformed waypoints. This is the desired trajectory the vehicle should follow (drawn in yellow in the simulator). Because we are now acting in the coordinate system of the vehicle `x`, `y`, and `psi` of the initial state are all zero. The `cte` and `epsi` can be calculated using the polynomial.
+
+### Model Predictive Control with Latency
+
+A problem a lot of controller struggle with is latency. Latency describes the delay between calculation and actual implementation of the control parameters. This is a problem because when the parameters are applied the state is already different and the control parameters react to a state that is no longer valid.
+
+In my implementation, the model accounts for latency by predicting the state for the time the control parameters are applied. This means the current state is taken and based on that the state of 100 ms (latency) in the future is predicted. This predicted state is then passed to the controller to calculate the `delta` and `a` that should be applied.
+
 ## Dependencies
 
 * cmake >= 3.5
